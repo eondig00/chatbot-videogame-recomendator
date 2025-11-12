@@ -1,2 +1,9 @@
 streamlit
-openai
+pandas
+numpy<2.0
+pyarrow
+faiss-cpu
+sentence-transformers==2.7.0
+scikit-learn
+tqdm
+pyyaml

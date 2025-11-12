@@ -1,0 +1,13 @@
+paths:
+  processed: data/processed
+  embeddings: data/embeddings
+  index: data/index
+data:
+  primary_csv: data/processed/games_march2025_cleaned.csv
+embedding:
+  model: all-MiniLM-L6-v2
+  batch_size: 16
+index:
+  backend: faiss
+app:
+  topk: 10
