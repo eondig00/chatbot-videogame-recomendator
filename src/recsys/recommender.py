@@ -3,6 +3,22 @@ from pathlib import Path
 from sentence_transformers import SentenceTransformer
 from src.utils.config import load_config
 
+DATA_PARQUET = Path("data/processed/games.parquet")
+EMB_DIR = Path("data/embeddings")
+IDX_DIR = Path("data/index")
+MODEL_NAME = "all-MiniLM-L6-v2"
+
+
+# Fix para imagenes
+_df = pd.read_parquet(DATA_PARQUET)  # full dataset con header_image y todo
+_meta = _df.set_index("appid")       # lookups rápidos por appid
+
+_index = faiss.read_index(str(IDX_DIR / "faiss.index"))
+_model = SentenceTransformer(MODEL_NAME)
+
+# Mapear la fila del embeddin -> appid
+_emb_ids = np.load(EMB_DIR / "ids.npy") 
+
 def _encode(texts, model_name): 
     return SentenceTransformer(model_name).encode(texts, normalize_embeddings=True).astype("float32")
 
@@ -16,24 +32,17 @@ def _why(row: dict, q: str) -> str:
         parts.append(f"Precio aprox: {row['price']}")
     return f"Relacionado con “{q}”. " + " | ".join(parts)
 
-def recommend_by_text(query: str, k: int = 10) -> list[dict]:
-    cfg = load_config()
-    data = pd.read_parquet(Path(cfg["paths"]["processed"]) / "games.parquet")
-    meta = pd.read_csv(Path(cfg["paths"]["embeddings"]) / "meta.csv")
-    index = faiss.read_index(str(Path(cfg["paths"]["index"]) / "faiss.index"))
-    qv = _encode([query], cfg["embedding"]["model"])
-    D, I = index.search(qv, k)
-
-    # acceso rápido por appid
-    data = data.set_index("appid", drop=False)
-    items=[]
-    for score, i in zip(D[0], I[0]):
-        appid = int(meta.iloc[i]["appid"])
-        row = data.loc[appid].to_dict()
-        items.append({
+def recommend_by_text(query: str, k: int = 10):
+    qv = _model.encode([query], normalize_embeddings=True).astype("float32")
+    scores, idxs = _index.search(qv, k)
+    out = []
+    for score, idx in zip(scores[0], idxs[0]):
+        appid = int(_emb_ids[idx])
+        row = _meta.loc[appid]
+        out.append({
             "appid": appid,
-            "name": row.get("name",""),
+            "name": row.get("name", ""),
             "score": float(score),
-            "why": _why(row, query)
+            "header_image": row.get("header_image", ""),
         })
-    return items
+    return out
