@@ -7,3 +7,4 @@ sentence-transformers==2.7.0
 scikit-learn
 tqdm
 pyyaml
+ollama

@@ -5,7 +5,7 @@ paths:
 data:
   primary_csv: data/processed/games_march2025_cleaned.csv
 embedding:
-  model: all-MiniLM-L6-v2
+  model: sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
   batch_size: 16
 index:
   backend: faiss
