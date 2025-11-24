@@ -1,29 +1,22 @@
-# pages/02_Chat.py
+# pages/02_Chat_LLM.py (idea)
 import streamlit as st
 from src.llm.chat_agent import chat_recommend
 
-st.title("🧠 Asistente LLM (Ollama)")
+st.title("💬 Asistente LLM de videojuegos")
 
-if "chat" not in st.session_state:
-    st.session_state["chat"] = []
+if "messages" not in st.session_state:
+    st.session_state["messages"] = []
 
-# Mostrar historial
-for msg in st.session_state["chat"]:
-    with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
+for m in st.session_state["messages"]:
+    with st.chat_message(m["role"]):
+        st.markdown(m["content"])
 
-prompt = st.chat_input("¿Qué tipo de juego buscas?")
-
-if prompt:
-    # Usuario
-    st.session_state["chat"].append({"role": "user", "content": prompt})
+if prompt := st.chat_input("¿Qué te apetece jugar?"):
+    st.session_state["messages"].append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    # LLM (Ollama)
     with st.chat_message("assistant"):
-        with st.spinner("Buscando recomendaciones…"):
-            answer = chat_recommend(prompt, model="llama3.2:1b")
-            st.markdown(answer)
-
-    st.session_state["chat"].append({"role": "assistant", "content": answer})
+        answer = chat_recommend(prompt)   # aquí se usa lo nuevo
+        st.markdown(answer)
+    st.session_state["messages"].append({"role": "assistant", "content": answer})
