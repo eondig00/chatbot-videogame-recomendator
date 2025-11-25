@@ -2,12 +2,16 @@ paths:
   processed: data/processed
   embeddings: data/embeddings
   index: data/index
+
 data:
   primary_csv: data/processed/games_march2025_cleaned.csv
+
 embedding:
-  model: sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
-  batch_size: 16
+  model: distiluse-base-multilingual-cased-v2
+  batch_size: 256
+
 index:
   backend: faiss
+
 app:
   topk: 10

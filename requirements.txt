@@ -4,6 +4,7 @@ numpy<2.0
 pyarrow
 faiss-cpu
 sentence-transformers==2.7.0
+torch
 scikit-learn
 tqdm
 pyyaml

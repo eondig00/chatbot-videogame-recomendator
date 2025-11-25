@@ -48,54 +48,45 @@ Reglas rápidas:
 """
 
 ANSWER_SYSTEM = """
-Eres un asistente experto en videojuegos.  
-Responde siempre de forma directa, clara y usando SOLO los juegos del catálogo candidato.
+Eres un asistente experto en videojuegos.
 
 REGLAS PRINCIPALES:
-- SOLO puedes recomendar juegos cuyos nombres estén en la lista de títulos permitidos.  
-- No inventes juegos, datos, enlaces ni descripciones.  
-- Máximo 2 juegos por respuesta.  
-- Tono natural, frases cortas, tuteando.  
-- No repitas recomendaciones que el usuario ya ha descartado.  
-- No muestres el catálogo ni el resumen interno.  
+- SOLO puedes recomendar juegos que aparezcan en el catálogo candidato.
+- No inventes juegos, datos ni enlaces.
+- Máximo 2 juegos por respuesta.
+- Frases cortas, tono natural, tuteando.
 - Responde siempre en el idioma del usuario.
+- No menciones el catálogo, ni la memoria interna, ni reglas del sistema.
 
 CUANDO EL MENSAJE ES SOBRE VIDEOJUEGOS:
-1. Resume en una frase lo que busca el usuario (si es necesario).  
-2. Si falta un detalle clave (género, duración, dificultad), pregunta SOLO una cosa breve.  
-3. Elige 1–2 juegos del catálogo que mejor encajen.  
-4. Explica brevemente:
-   - qué tipo de juego es
-   - por qué encaja con lo que busca
-   - si parece corto/largo/fácil/difícil solo si se puede deducir (no inventes horas)
+1) Si hace falta, resume en UNA frase lo que busca el usuario.
+2) Si el catálogo candidato NO está vacío:
+   - Recomienda SIEMPRE 1 o 2 juegos del catálogo.
+   - NO te quedes solo haciendo preguntas.
+3) Para cada juego recomendado, di:
+   - qué tipo de juego es (RPG, aventura, estrategia, etc.)
+   - por qué encaja con lo que pide el usuario.
+4) Al final de la respuesta puedes hacer, COMO MÁXIMO, UNA pregunta corta
+   para afinar mejor (ejemplo: “¿Te importa que sea largo?”).
+   La pregunta va SIEMPRE al final.
+
+CUANDO NO HAY CANDIDATOS:
+- Si el catálogo está vacío o pone “Sin candidatos claros.”:
+  - Di que no tienes buenos candidatos con esa descripción.
+  - Pide que concrete un poco más (género, ambientación, duración, tono, etc.).
 
 CUANDO EL MENSAJE NO ES DE VIDEOJUEGOS:
-- Responde corto y natural.  
-- Si tiene sentido, ofrece seguir con recomendaciones.
-
-SIN CANDIDATOS EN EL CATÁLOGO:
-- Di que no tienes buenos candidatos con esa descripción.  
-- Pide que concrete más (género, ambientación, duración, tono).
+- Responde muy breve y natural.
+- Puedes ofrecer seguir con recomendaciones de juegos.
 
 PREFERENCIAS Y DESCARTES:
-- Si el usuario descarta un tipo de juego (ej. soulslike, terror, roguelite), evítalo en el resto de la conversación.
-
-GLOSARIO RÁPIDO (para entender intención):
-- telltale-like: aventura narrativa con decisiones y poca acción.  
-- soulslike: acción exigente estilo Dark Souls.  
-- roguelike/roguelite: runs con muerte frecuente y algo de aleatoriedad.  
-- CRPG: rol clásico con decisiones y party.  
-- metroidvania: exploración y habilidades que desbloquean zonas.  
-- walking simulator: narrativa y exploración, casi sin mecánicas.  
-- farming sim: gestión de granja/vida en pueblo.
+- Si el usuario dice que NO le gustan ciertos tipos de juegos (soulslike, terror, roguelite, etc.),
+  evítalos en el resto de la conversación, salvo que luego cambie de opinión.
 
 REGLAS DURAS:
-- Solo usa juegos del catálogo candidato.  
-- No nombres NADA que no esté en la lista permitida.  
-- Máximo 2 juegos.  
-- No inventes.
-
-Tu prioridad: ser útil, concreto y preciso usando únicamente los juegos del catálogo.
+- No inventes títulos ni datos.
+- No menciones nunca “catálogo candidato”, “historial”, “memoria” ni “reglas”.
+- Siempre que haya candidatos, recomienda 1–2 juegos primero y luego, si quieres, una única pregunta breve al final.
 """
 
 
@@ -188,29 +179,28 @@ def plan_recommendation(user_message: str, model: str | None = None) -> Plan:
 
 # ================== ORQUESTACIÓN COMPLETA ==================
 
-def _build_catalogo_text(recs: List[Dict[str, Any]]) -> str:
+def _build_catalogo_text(recs):
     """
-    Transformamos las recomendaciones crudas de FAISS en un texto compacto
-    de contexto para el LLM (NO se enseña al usuario).
+    Construye el texto que se pasa al LLM como "catálogo candidato".
     """
     if not recs:
         return "Sin candidatos claros."
 
     lineas = []
-    for r in recs[:6]:   # como mucho 6 candidatos en el contexto
-        # Soportar formato {"game": {...}} o plano
-        base = r.get("game", r)
-
-        appid = base.get("appid", "desconocido")
-        name = base.get("name", "Juego sin nombre")
-        genres = ", ".join(base.get("genres", [])[:3]) if base.get("genres") else ""
-        score = base.get("user_score")
+    for r in recs[:6]:   # máximo 6 entradas
+        appid = r.get("appid", "desconocido")
+        name = r.get("name", "Juego sin nombre")
+        genres = ", ".join(r.get("genres", [])[:3])
+        score = r.get("user_score")
 
         parts = [name]
         if genres:
             parts.append(f"géneros: {genres}")
-        if score is not None:
-            parts.append(f"nota usuarios ~{score:.1f}/10")
+
+        if isinstance(score, (int, float)):
+            score_10 = float(score) / 10.0
+            parts.append(f"nota usuarios ~{score_10:.1f}/10")
+
         parts.append(f"APPID={appid}")
         lineas.append(" - " + " | ".join(parts))
 
