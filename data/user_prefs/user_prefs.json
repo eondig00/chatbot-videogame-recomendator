@@ -1,0 +1,14 @@
+{
+  "liked_genres": [
+    "Soulslike",
+    "RPG"
+  ],
+  "disliked_genres": [
+    "City Builder"
+  ],
+  "avoid_tags": [],
+  "min_user_score": 60.0,
+  "min_num_reviews": 50,
+  "max_price": null,
+  "avoid_nsfw": true
+}

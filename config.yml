@@ -2,6 +2,7 @@ paths:
   processed: data/processed
   embeddings: data/embeddings
   index: data/index
+  user_prefs: data/user_prefs/user_prefs.json 
 
 data:
   primary_csv: data/processed/games_march2025_cleaned.csv

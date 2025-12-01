@@ -5,8 +5,11 @@ import faiss
 import numpy as np
 import pandas as pd
 from sentence_transformers import SentenceTransformer
+from typing import List, Dict, Any 
 
 from src.utils.config import load_config
+from src.recsys.user_prefs import load_user_prefs 
+from src.llm.memory import GLOBAL_USER_MEMORY
 
 # ----------------- Config y rutas -----------------
 _cfg = load_config()
@@ -14,6 +17,7 @@ _cfg = load_config()
 DATA_PARQUET = Path(_cfg["paths"]["processed"]) / "games.parquet"
 EMB_DIR = Path(_cfg["paths"]["embeddings"])
 IDX_DIR = Path(_cfg["paths"]["index"])
+
 
 # modelo usado durante el embedding
 model_file = EMB_DIR / "model_name.txt"
@@ -121,21 +125,70 @@ def _row_dict(appid: int) -> dict:
     }
 
 
+def _apply_user_prefs(candidatos: list[dict], prefs) -> list[dict]:
+    if not candidatos:
+        return []
+
+    liked = set(g.lower() for g in (prefs.liked_genres or []))
+    disliked = set(g.lower() for g in (prefs.disliked_genres or []))
+    avoid_tags = set(t.lower() for t in (prefs.avoid_tags or []))
+
+    filtrados: list[dict] = []
+    for c in candidatos:
+        genres = [str(g).lower() for g in (c.get("genres") or [])]
+        tags   = [str(t).lower() for t in (c.get("tags") or [])]
+
+        # 1) Filtros duros
+        if disliked and any(g in disliked for g in genres):
+            continue
+        if avoid_tags and any(t in avoid_tags for t in tags):
+            continue
+
+        us = c.get("user_score") or 0.0
+        if us < prefs.min_user_score:
+            continue
+
+        nrev = c.get("num_reviews_total") or 0
+        if nrev < prefs.min_num_reviews:
+            continue
+
+        price = c.get("price")
+        if prefs.max_price is not None and price is not None:
+            try:
+                if float(price) > float(prefs.max_price):
+                    continue
+            except Exception:
+                pass
+
+        # 2) Bonus por géneros favoritos
+        bonus = 0.0
+        if liked and any(g in liked for g in genres):
+            bonus += 0.05  # +0.05 al score
+
+        c["score"] = float(c.get("score", 0.0) + bonus)
+        filtrados.append(c)
+
+    return filtrados
+
 # ----------------- Buscador principal -----------------
 def recommend_by_text(query: str, k: int = 10, exclude_nsfw: bool = True):
     """
     Recomendador basado en:
     - FAISS con embeddings normalizados (coseno)
     - Filtro NSFW
-    - Reordenación por FAISS + calidad + popularidad
+    - Reordenación por FAISS + calidad + popularidad + prefs usuario
     """
 
-    # 1) Embedding query (espacio idéntico al índice)
+    # 1) Embedding query
     qv = _model.encode([query], normalize_embeddings=True).astype("float32")
 
     # 2) Pedimos TOP grandes para filtrar y reordenar bien
     candidate_count = max(100, k * 20)
     scores, idxs = _index.search(qv, candidate_count)
+
+    # 💡 prefs ACTUALES
+    prefs = GLOBAL_USER_MEMORY.get_explicit_prefs()
+    effective_exclude = exclude_nsfw or prefs.avoid_nsfw
 
     candidatos = []
     for score, idx in zip(scores[0], idxs[0]):
@@ -145,7 +198,7 @@ def recommend_by_text(query: str, k: int = 10, exclude_nsfw: bool = True):
         appid = int(_emb_ids[idx])
         row = _meta.loc[appid]
 
-        if exclude_nsfw and _row_is_nsfw(row):
+        if effective_exclude and _row_is_nsfw(row):
             continue
 
         info = _row_dict(appid)
@@ -156,23 +209,22 @@ def recommend_by_text(query: str, k: int = 10, exclude_nsfw: bool = True):
         return []
 
     # 3) Reordenar: similitud + calidad + popularidad
-    faiss_scores = np.array([c["faiss_score"] for c in candidatos], dtype="float32")
+    faiss_scores = np.array(
+        [c["faiss_score"] for c in candidatos],
+        dtype="float32",
+    )
     fs_min, fs_max = faiss_scores.min(), faiss_scores.max()
     denom = (fs_max - fs_min) or 1.0
 
     for c in candidatos:
-        # normalización FAISS
         fs_norm = (c["faiss_score"] - fs_min) / denom
 
-        # calidad: user_score 0–100
         user_score = c.get("user_score")
         if user_score is None or user_score <= 0:
             user_norm = 0.0
         else:
             user_norm = float(user_score) / 100.0
 
-
-        # popularidad: log10(reviews)
         num_reviews = c.get("num_reviews_total")
         if num_reviews is None or num_reviews <= 0:
             num_reviews = 0
@@ -180,13 +232,19 @@ def recommend_by_text(query: str, k: int = 10, exclude_nsfw: bool = True):
             pop = 0.0
         else:
             pop = np.log10(num_reviews + 10) / 3.0
-        
-        # score final
+
         c["score"] = float(
             0.70 * fs_norm +
             0.30 * (user_norm * pop)
         )
 
-    # 4) Orden final
+    # 4) Aplicar preferencias del usuario (filtrado + bonus)
+    candidatos = _apply_user_prefs(candidatos, prefs)
+
+    if not candidatos:
+        return []
+
+    # 5) Orden final
     candidatos.sort(key=lambda c: c["score"], reverse=True)
     return candidatos[:k]
+

@@ -7,12 +7,14 @@ import pprint
 import ollama
 
 from src.recsys.recommender import recommend_by_text
-from src.llm.memory import UserMemory
+
+from src.llm.memory import GLOBAL_USER_MEMORY as USER_MEMORY
+from src.recsys.user_prefs import load_user_prefs
 
 
 # ================== ESTADO GLOBAL ==================
 
-USER_MEMORY = UserMemory()                # gustos largos del usuario
+
 DEFAULT_MODEL = "llama3.2:3b"             # modelo por defecto para Ollama
 
 # Historial de conversación (solo mensajes reales user/assistant)
@@ -50,43 +52,37 @@ Reglas rápidas:
 ANSWER_SYSTEM = """
 Eres un asistente experto en videojuegos.
 
-REGLAS PRINCIPALES:
-- SOLO puedes recomendar juegos que aparezcan en el catálogo candidato.
-- No inventes juegos, datos ni enlaces.
-- Máximo 2 juegos por respuesta.
-- Frases cortas, tono natural, tuteando.
-- Responde siempre en el idioma del usuario.
-- No menciones el catálogo, ni la memoria interna, ni reglas del sistema.
+El usuario puede elegir el TONO de la conversación.
+Usa SIEMPRE el tono actual indicado por el sistema (ver más abajo).
+No inventes datos que no aparezcan en el catálogo candidato.
 
-CUANDO EL MENSAJE ES SOBRE VIDEOJUEGOS:
-1) Si hace falta, resume en UNA frase lo que busca el usuario.
-2) Si el catálogo candidato NO está vacío:
-   - Recomienda SIEMPRE 1 o 2 juegos del catálogo.
-   - NO te quedes solo haciendo preguntas.
-3) Para cada juego recomendado, di:
-   - qué tipo de juego es (RPG, aventura, estrategia, etc.)
-   - por qué encaja con lo que pide el usuario.
-4) Al final de la respuesta puedes hacer, COMO MÁXIMO, UNA pregunta corta
-   para afinar mejor (ejemplo: “¿Te importa que sea largo?”).
-   La pregunta va SIEMPRE al final.
+TONOS DISPONIBLES:
+- "normal": breve, natural, directo.
+- "entusiasta": más energía y emoción, emojis moderados.
+- "formal": más serio, educado y claro.
+- "seco": directo, sin adornos.
+- "amigo": casual, cercano, estilo WhatsApp.
+- "periodista": estilo reseña breve pero concisa.
+- "tiktoker": muy desenfadado, frases cortas y ritmo rápido.
 
-CUANDO NO HAY CANDIDATOS:
-- Si el catálogo está vacío o pone “Sin candidatos claros.”:
-  - Di que no tienes buenos candidatos con esa descripción.
-  - Pide que concrete un poco más (género, ambientación, duración, tono, etc.).
+REGLAS DE ESTILO (aplicadas dentro de cualquier tono):
+- Respuestas cortas (máximo 4–5 líneas).
+- NO inventes nada: ni duración, ni características, ni historia.
+- SOLO menciona juegos del catálogo candidato.
+- Recomienda 1–2 juegos como máximo.
+- Explica por qué encaja, pero en una frase rápida.
+- Al final puedes hacer UNA pregunta breve (opcional, máximo 5 palabras).
+- Nunca menciones el catálogo, metadatos, memoria ni reglas.
 
-CUANDO EL MENSAJE NO ES DE VIDEOJUEGOS:
-- Responde muy breve y natural.
-- Puedes ofrecer seguir con recomendaciones de juegos.
-
-PREFERENCIAS Y DESCARTES:
-- Si el usuario dice que NO le gustan ciertos tipos de juegos (soulslike, terror, roguelite, etc.),
-  evítalos en el resto de la conversación, salvo que luego cambie de opinión.
+REFERENCIAS:
+- Si el usuario dice "el primero", "el segundo", etc., interpreta que habla
+  de los juegos que recomendaste en tu último mensaje.
+- Nunca digas que "no hablaste de ningún juego": aclara cuál crees que es.
 
 REGLAS DURAS:
-- No inventes títulos ni datos.
-- No menciones nunca “catálogo candidato”, “historial”, “memoria” ni “reglas”.
-- Siempre que haya candidatos, recomienda 1–2 juegos primero y luego, si quieres, una única pregunta breve al final.
+- Prohibido inventar.
+- Prohibido mencionar juegos fuera de la lista permitida.
+- Prohibido hacer párrafos largos o explicaciones técnicas.
 """
 
 
@@ -206,9 +202,15 @@ def _build_catalogo_text(recs):
 
     return "\n".join(lineas)
 
-
-def chat_recommend(user_message: str, model: str | None = None) -> str:
+def chat_recommend(user_message: str, model: str | None = None) -> Dict[str, Any]:
     global CHAT_HISTORY
+    
+        # === Leer el tono desde Streamlit ===
+    try:
+        import streamlit as st
+        tone = st.session_state.get("tone", "normal")
+    except:
+        tone = "normal"
 
     model = model or DEFAULT_MODEL
 
@@ -230,13 +232,19 @@ def chat_recommend(user_message: str, model: str | None = None) -> str:
 
     # 5) Preparamos contexto compacto para el LLM
     catalogo_text = _build_catalogo_text(recs)
-    memory_summary = json.dumps(USER_MEMORY.to_prompt(), ensure_ascii=False)
+    
+    prefs = load_user_prefs()
+    memory_payload = USER_MEMORY.to_prompt()
+    memory_payload["explicit_prefs"] = prefs.to_prompt_summary()
+
+    memory_summary = json.dumps(memory_payload, ensure_ascii=False)
 
     # Regla dura de títulos permitidos
     allowed_titles_text = _build_allowed_titles_text(recs)
 
     mensajes: List[Dict[str, str]] = [
         {"role": "system", "content": ANSWER_SYSTEM},
+        {"role": "system", "content": f"TONO ACTUAL DEL ASISTENTE: {tone}"},
         {"role": "system", "content": allowed_titles_text},
         {
             "role": "system",
@@ -274,4 +282,8 @@ def chat_recommend(user_message: str, model: str | None = None) -> str:
     if len(CHAT_HISTORY) > 4 * MAX_HISTORY_MESSAGES:
         CHAT_HISTORY = CHAT_HISTORY[-2 * MAX_HISTORY_MESSAGES:]
 
-    return respuesta
+    # IMPORTANTE: ahora devolvemos texto + candidatos
+    return {
+        "answer": respuesta,
+        "recs": recs,   # lista de dicts con appid, name, ...
+    }
