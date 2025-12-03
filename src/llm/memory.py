@@ -71,9 +71,12 @@ class UserMemory:
         self.generos_frecuentes: List[str] = []
         self.tags_frecuentes: List[str] = []
         self.num_juegos_vistos: int = 0
+        
+        self.tone: str = "normal"
 
         # Cargar preferencias guardadas
         self.explicit_prefs: UserPrefs = self._load_prefs_from_disk()
+        self.tone: UserPrefs = self._load_prefs_from_disk()
 
     # ---------- CARGA / GUARDADO ----------
 
@@ -87,7 +90,7 @@ class UserMemory:
                 min_num_reviews=0,
                 max_price=None,
                 avoid_nsfw=True,
-            )
+            ), "normal"
 
         try:
             raw = self._prefs_file.read_text(encoding="utf-8")

@@ -34,7 +34,7 @@ if st.button("Buscar", type="primary") and q.strip():
                 with cols[0]:
                     img = r.get("header_image")
                     if isinstance(img, str):
-                        st.image(img, use_container_width=True)
+                        st.image(img, width='content')
 
                 # -------- TEXTO --------
                 with cols[1]:

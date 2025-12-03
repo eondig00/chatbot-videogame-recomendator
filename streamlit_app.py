@@ -1,4 +1,7 @@
 import streamlit as st
+from pathlib import Path
+import pandas as pd
+
 from src.llm.chat_agent import chat_recommend
 
 # ================== CONFIG STREAMLIT ==================
@@ -11,6 +14,22 @@ st.set_page_config(
 
 st.title("🎮 PixelSage")
 st.caption("Escribe lo que buscas y el asistente te recomendará juegos.")
+
+# ================== CARGA DE DATOS ==================
+
+@st.cache_resource
+def load_games_df():
+    data_path = Path("data/processed/games.parquet")
+    return pd.read_parquet(data_path)
+
+GAMES_DF = load_games_df()
+
+def get_game_row(appid: int):
+    df = GAMES_DF
+    row = df.loc[df["appid"] == appid]
+    if row.empty:
+        return None
+    return row.iloc[0]
 
 # ================== ESTILOS DE CHAT ==================
 
@@ -53,21 +72,17 @@ st.markdown(
 )
 
 # ================== ESTADO DE SESIÓN ==================
-# - chat_messages: [{"role": "user"/"assistant", "content": "..."}]
-# - last_recs: lista de juegos candidatos de la última respuesta
+# - chat_messages: [{"role": "...", "content": "...", "games": [ {appid, name...}, ...]}]
 
 if "chat_messages" not in st.session_state:
     st.session_state.chat_messages = []
-    # Mensaje inicial opcional
     st.session_state.chat_messages.append(
         {
             "role": "assistant",
             "content": "¡Hola! Dime qué te apetece jugar y te recomiendo algo.",
+            "games": [],
         }
     )
-
-if "last_recs" not in st.session_state:
-    st.session_state.last_recs = []
 
 # ================== HISTORIAL DE CONVERSACIÓN ==================
 
@@ -87,6 +102,42 @@ for msg in st.session_state.chat_messages:
             """,
             unsafe_allow_html=True,
         )
+
+        # Fichas de juegos mencionados explícitamente en esa respuesta
+        games = msg.get("games") or []
+        for g in games:
+            appid = g.get("appid")
+            if appid is None:
+                continue
+            row = get_game_row(int(appid))
+            if row is None:
+                continue
+
+            with st.container():
+                cols = st.columns([1, 2])
+                with cols[0]:
+                    img = row.get("header_image")
+                    if isinstance(img, str) and img.startswith(("http://", "https://")):
+                        st.image(img, width='content')
+                with cols[1]:
+                    st.markdown(f"**{row.get('name', 'Sin nombre')}**")
+
+                    us = row.get("user_score")
+                    if isinstance(us, (int, float)):
+                        st.caption(f"⭐ {us:.1f}/100")
+
+                    price = row.get("price")
+                    if isinstance(price, (int, float)):
+                        st.caption(f"💰 {price:.2f} €")
+
+                    short_desc = row.get("short_description") or ""
+                    if short_desc:
+                        st.write((short_desc[:180] + "…").strip())
+
+                    if st.button("🗂️ Ver ficha completa", key=f"chat-ficha-{appid}"):
+                        st.session_state["selected_appid"] = int(appid)
+                        st.switch_page("pages/03_Ficha_Juego.py")
+
     else:
         # Usuario → derecha
         st.markdown(
@@ -100,20 +151,6 @@ for msg in st.session_state.chat_messages:
             """,
             unsafe_allow_html=True,
         )
-
-# ----- Botones "Ver ficha" para los últimos candidatos -----
-
-last_recs = st.session_state.get("last_recs", [])
-if last_recs:
-    st.markdown("### 🎮 Juegos de esta recomendación")
-    for r in last_recs[:3]:  # máximo 3 botones
-        name = r.get("name", "Juego sin nombre")
-        appid = r.get("appid")
-        if appid is None:
-            continue
-        if st.button(f"🗂️ Ver ficha: {name}", key=f"chat-ficha-{appid}"):
-            st.session_state["selected_appid"] = int(appid)
-            st.switch_page("pages/03_Ficha_Juego.py")
 
 # ================== INPUT DEL USUARIO ==================
 
@@ -137,7 +174,9 @@ if user_input:
         )
 
         # 2) Guardar mensaje del usuario en la conversación
-        st.session_state.chat_messages.append({"role": "user", "content": text})
+        st.session_state.chat_messages.append(
+            {"role": "user", "content": text, "games": []}
+        )
 
         # 3) Burbuja de "Escribiendo..." del bot
         bot_typing_placeholder = st.empty()
@@ -153,26 +192,37 @@ if user_input:
             unsafe_allow_html=True,
         )
 
-        # 4) Llamar al modelo y guardar candidatos
+        # 4) Llamar al modelo
         try:
             result = chat_recommend(text)
             if isinstance(result, dict):
-                answer = result.get("answer", "")
-                st.session_state.last_recs = result.get("recs", []) or []
+                answer = result.get("answer", "") or ""
+                candidate_recs = result.get("recs", []) or []
             else:
-                # fallback por si algo devuelve solo texto
                 answer = str(result)
-                st.session_state.last_recs = []
+                candidate_recs = []
         except Exception as e:
             answer = f"Ha habido un error llamando al modelo: {e}"
-            st.session_state.last_recs = []
+            candidate_recs = []
 
-        # 5) Añadir respuesta del bot
+        # 5) Detectar qué juegos han sido mencionados explícitamente por nombre
+        mentioned_games = []
+        ans_lower = answer.lower()
+        for r in candidate_recs:
+            name = str(r.get("name") or "").strip()
+            if name and name.lower() in ans_lower:
+                mentioned_games.append(r)
+
+        # 6) Añadir respuesta del bot con las fichas asociadas
         st.session_state.chat_messages.append(
-            {"role": "assistant", "content": answer.strip()}
+            {
+                "role": "assistant",
+                "content": answer.strip(),
+                "games": mentioned_games,
+            }
         )
 
-        # 6) Limpiar placeholders y refrescar
+        # 7) Limpiar placeholders y refrescar
         user_placeholder.empty()
         bot_typing_placeholder.empty()
         st.rerun()
@@ -186,7 +236,7 @@ with st.sidebar:
     tono = st.selectbox(
         "Selecciona el tono:",
         ["normal", "amigo", "entusiasta", "formal", "seco", "periodista", "tiktoker"],
-        index=0
+        index=0,
     )
     st.session_state["tone"] = tono
     
@@ -203,6 +253,5 @@ Si quieres empezar de cero la conversación, pulsa abajo.
 
     if st.button("🧹 Reset conversación"):
         st.session_state.chat_messages = []
-        st.session_state.last_recs = []
         st.success("Conversación reiniciada.")
         st.rerun()
