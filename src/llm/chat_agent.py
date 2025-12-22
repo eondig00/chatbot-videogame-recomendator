@@ -7,13 +7,10 @@ import pprint
 import ollama
 
 from src.recsys.recommender import recommend_by_text
-
 from src.llm.memory import GLOBAL_USER_MEMORY as USER_MEMORY
-from src.recsys.user_prefs import load_user_prefs
 
 
 # ================== ESTADO GLOBAL ==================
-
 
 DEFAULT_MODEL = "llama3.2:3b"             # modelo por defecto para Ollama
 
@@ -90,11 +87,6 @@ REGLAS DURAS:
 
 def _ollama_chat(model: str, messages: List[Dict[str, str]]) -> str:
     """Wrapper sencillo para ollama.chat() que devuelve sólo el 'content'."""
-    # Debug opcional:
-    # print("\n=== MENSAJES ENVIADOS A OLLAMA ===")
-    # pprint.pprint(messages)
-    # print("==================================\n")
-
     res = ollama.chat(model=model, messages=messages)
     return res["message"]["content"]
 
@@ -147,7 +139,6 @@ def plan_recommendation(user_message: str, model: str | None = None) -> Plan:
         {"role": "user", "content": user_message},
     ]
 
-    # Debug:
     print("\n=== MENSAJES ENVIADOS A OLLAMA (PLANNER) ===")
     pprint.pprint(messages)
     print("===========================================\n")
@@ -202,17 +193,24 @@ def _build_catalogo_text(recs):
 
     return "\n".join(lineas)
 
+
 def chat_recommend(user_message: str, model: str | None = None) -> Dict[str, Any]:
     global CHAT_HISTORY
-    
-        # === Leer el tono desde Streamlit ===
-    try:
-        import streamlit as st
-        tone = st.session_state.get("tone", "normal")
-    except:
-        tone = "normal"
 
     model = model or DEFAULT_MODEL
+
+    # === Tono: sincronizar UI (si existe) con la memoria ===
+    ui_tone = None
+    try:
+        import streamlit as st
+        ui_tone = st.session_state.get("tone")
+    except Exception:
+        pass
+
+    if ui_tone:
+        USER_MEMORY.set_tone(ui_tone)
+
+    tone = USER_MEMORY.get_tone()
 
     # 1) Actualizamos memoria de gustos con la nueva consulta
     USER_MEMORY.update_from_query(user_message)
@@ -232,11 +230,9 @@ def chat_recommend(user_message: str, model: str | None = None) -> Dict[str, Any
 
     # 5) Preparamos contexto compacto para el LLM
     catalogo_text = _build_catalogo_text(recs)
-    
-    prefs = load_user_prefs()
-    memory_payload = USER_MEMORY.to_prompt()
-    memory_payload["explicit_prefs"] = prefs.to_prompt_summary()
 
+    # payload ya incluye explicit_prefs + tone
+    memory_payload = USER_MEMORY.to_prompt()
     memory_summary = json.dumps(memory_payload, ensure_ascii=False)
 
     # Regla dura de títulos permitidos
@@ -248,15 +244,15 @@ def chat_recommend(user_message: str, model: str | None = None) -> Dict[str, Any
         {"role": "system", "content": allowed_titles_text},
         {
             "role": "system",
-            "content": f"Metadatos internos: search_query={plan.search_query!r}, exclude_nsfw={plan.exclude_nsfw}"
+            "content": f"Metadatos internos: search_query={plan.search_query!r}, exclude_nsfw={plan.exclude_nsfw}",
         },
         {
             "role": "system",
-            "content": "PREFERENCIAS DEL USUARIO (RESUMEN INTERNO):\n" + memory_summary
+            "content": "PREFERENCIAS DEL USUARIO (RESUMEN INTERNO):\n" + memory_summary,
         },
         {
             "role": "system",
-            "content": "CATÁLOGO CANDIDATO (NO LO MUESTRES TAL CUAL, ES SOLO CONTEXTO):\n" + catalogo_text
+            "content": "CATÁLOGO CANDIDATO (NO LO MUESTRES TAL CUAL, ES SOLO CONTEXTO):\n" + catalogo_text,
         },
     ]
 
@@ -267,7 +263,6 @@ def chat_recommend(user_message: str, model: str | None = None) -> Dict[str, Any
     # Mensaje actual del usuario
     mensajes.append({"role": "user", "content": user_message})
 
-    # Debug:
     print("\n=== MENSAJES ENVIADOS A OLLAMA (CHAT) ===")
     pprint.pprint(mensajes)
     print("=========================================\n")

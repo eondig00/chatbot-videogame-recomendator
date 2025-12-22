@@ -1,5 +1,5 @@
 from __future__ import annotations
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -56,6 +56,7 @@ class UserMemory:
     - ultimas_consultas: queries de texto recientes.
     - generos_frecuentes, tags_frecuentes: contadores ligeros.
     - explicit_prefs: lo que el usuario fija a mano (página de preferencias).
+    - tone: tono actual del asistente de chat.
     """
 
     def __init__(self) -> None:
@@ -71,16 +72,22 @@ class UserMemory:
         self.generos_frecuentes: List[str] = []
         self.tags_frecuentes: List[str] = []
         self.num_juegos_vistos: int = 0
-        
+
+        # valor por defecto
         self.tone: str = "normal"
 
-        # Cargar preferencias guardadas
-        self.explicit_prefs: UserPrefs = self._load_prefs_from_disk()
-        self.tone: UserPrefs = self._load_prefs_from_disk()
+        # Cargar preferencias + tono guardado (o defaults)
+        self.explicit_prefs, self.tone = self._load_prefs_from_disk()
 
     # ---------- CARGA / GUARDADO ----------
 
-    def _load_prefs_from_disk(self) -> UserPrefs:
+    def _load_prefs_from_disk(self) -> tuple[UserPrefs, str]:
+        """
+        Devuelve (explicit_prefs, tone).
+        Soporta dos formatos de fichero:
+        - nuevo: {"explicit_prefs": {...}, "tone": "amigo"}
+        - antiguo: {...solo prefs...}
+        """
         if not self._prefs_file.exists():
             return UserPrefs(
                 liked_genres=[],
@@ -95,7 +102,16 @@ class UserMemory:
         try:
             raw = self._prefs_file.read_text(encoding="utf-8")
             data = json.loads(raw)
-            return UserPrefs.from_dict(data)
+
+            if "explicit_prefs" in data:
+                prefs_data = data["explicit_prefs"]
+                tone = data.get("tone", "normal")
+            else:
+                # compatibilidad con el formato antiguo
+                prefs_data = data
+                tone = "normal"
+
+            return UserPrefs.from_dict(prefs_data), str(tone)
         except Exception:
             return UserPrefs(
                 liked_genres=[],
@@ -105,11 +121,15 @@ class UserMemory:
                 min_num_reviews=0,
                 max_price=None,
                 avoid_nsfw=True,
-            )
+            ), "normal"
 
     def _save_prefs_to_disk(self) -> None:
+        payload = {
+            "explicit_prefs": self.explicit_prefs.to_dict(),
+            "tone": self.tone,
+        }
         self._prefs_file.write_text(
-            json.dumps(self.explicit_prefs.to_dict(), ensure_ascii=False, indent=2),
+            json.dumps(payload, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
 
@@ -168,7 +188,6 @@ class UserMemory:
         self.generos_frecuentes = self.generos_frecuentes[-40:]
         self.tags_frecuentes = self.tags_frecuentes[-40:]
 
-    
     def to_prompt(self) -> Dict[str, Any]:
         return {
             "ultimas_consultas": self.ultimas_consultas[-5:],
@@ -176,6 +195,7 @@ class UserMemory:
             "tags_frecuentes": self.tags_frecuentes[-8:],
             "num_juegos_vistos": self.num_juegos_vistos,
             "explicit_prefs": self.explicit_prefs.to_prompt_summary(),
+            "tone": self.tone,
         }
 
     # ---------- API PARA LA PÁGINA DE PREFERENCIAS ----------
@@ -202,6 +222,26 @@ class UserMemory:
             max_price=max_price,
             avoid_nsfw=avoid_nsfw,
         )
+        self._save_prefs_to_disk()
+
+    # ---------- TONO DEL ASISTENTE ----------
+
+    def get_tone(self) -> str:
+        return self.tone
+
+    def set_tone(self, tone: str) -> None:
+        allowed = {
+            "normal",
+            "entusiasta",
+            "formal",
+            "seco",
+            "amigo",
+            "periodista",
+            "tiktoker",
+        }
+        if tone not in allowed:
+            tone = "normal"
+        self.tone = tone
         self._save_prefs_to_disk()
 
 
