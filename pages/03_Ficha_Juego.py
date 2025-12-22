@@ -5,6 +5,7 @@ from pathlib import Path
 import html
 import urllib.parse
 import ollama
+import pyarrow.parquet as pq
 
 from src.utils.config import load_config
 from src.llm.likes import LIKES
@@ -172,7 +173,8 @@ if appid is None:
 # ================== 2) Cargar datos ==================
 cfg = load_config()
 data_parquet = Path(cfg["paths"]["processed"]) / "games.parquet"
-df = pd.read_parquet(data_parquet)
+table = pq.read_table(data_parquet)
+df = table.to_pandas(self_destruct=True)
 
 row = df.loc[df["appid"] == appid]
 if row.empty:
