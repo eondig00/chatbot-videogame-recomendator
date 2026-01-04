@@ -3,7 +3,7 @@
 
 PixelSage es un **sistema de recomendación de videojuegos que se ejecuta íntegramente en local**, diseñado para ayudar a los usuarios a descubrir juegos acordes a sus gustos utilizando **lenguaje natural**.
 
-A diferencia de los sistemas de recomendación comerciales, PixelSage combina:
+PixelSage combina:
 - búsqueda semántica mediante embeddings,
 - un motor de búsqueda vectorial,
 - y un modelo de lenguaje utilizado de forma controlada,
